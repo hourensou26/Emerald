@@ -137,17 +137,7 @@ class AccountingController extends Controller
                     'subtotal',
                 ]);
             }])
-            ->find($id);
-
-        if (!$order) {
-            return response()->json([
-                'errors' => [[
-                    'status' => '404',
-                    'title' => 'Not Found',
-                    'detail' => '指定した会計が見つかりません',
-                ]],
-            ], 404, [], JSON_UNESCAPED_UNICODE);
-        }
+            ->findOrFail($id);
 
         return OrderResource::make($order)
             ->response()
@@ -171,17 +161,7 @@ class AccountingController extends Controller
                 ]);
             }])
             ->where('ticket_number', strtoupper($ticketNumber))
-            ->first();
-
-        if (!$order) {
-            return response()->json([
-                'errors' => [[
-                    'status' => '404',
-                    'title' => 'Not Found',
-                    'detail' => '指定した会計番号が見つかりません',
-                ]],
-            ], 404, [], JSON_UNESCAPED_UNICODE);
-        }
+            ->firstOrFail();
 
         return OrderResource::make($order)
             ->response()
@@ -282,26 +262,10 @@ class AccountingController extends Controller
 
         $order = Order::query()
             ->forStore($storeId)
-            ->find($id);
-
-        if (!$order) {
-            return response()->json([
-                'errors' => [[
-                    'status' => '404',
-                    'title' => 'Not Found',
-                    'detail' => '指定した会計が見つかりません',
-                ]],
-            ], 404, [], JSON_UNESCAPED_UNICODE);
-        }
+            ->findOrFail($id);
 
         if ($order->status === 'settled') {
-            return response()->json([
-                'errors' => [[
-                    'status' => '409',
-                    'title' => 'Conflict',
-                    'detail' => 'この会計はすでに清算済みです',
-                ]],
-            ], 409, [], JSON_UNESCAPED_UNICODE);
+            abort(409);
         }
 
         $order->status = 'settled';
@@ -404,8 +368,8 @@ class AccountingController extends Controller
 
     private function generateNextTicketNumber(string $storeId): string
     {
-        // Use a dedicated ticket_counters table to atomically increment per-store counters.
-        // Each store owns its own prefix, so ticket numbers stay readable and unique.
+        // 専用のticket_countersテーブルを使い、店舗ごとのカウンターを原子的に更新する。
+        // 店舗ごとにprefixを持たせ、受付番号を読みやすく一意に保つ。
         return DB::transaction(function () use ($storeId) {
             $prefix = $this->ticketPrefixForStoreId($storeId);
 
@@ -414,16 +378,16 @@ class AccountingController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            // First ticket for this store: determine starting point from existing orders to avoid collisions.
+            // 店舗で最初の受付番号を発行する場合は、既存注文を確認して衝突を避ける。
             if (!$counter) {
-                // Find max numeric suffix from existing ticket_numbers like '<prefix>-<num>'
+                // '<prefix>-<num>'形式のticket_numberから数値部分の最大値を取得する。
                 $max = Order::query()
                     ->where('store_id', $storeId)
                     ->where('ticket_number', 'like', $prefix . '-%')
                     ->selectRaw('MAX(CAST(SUBSTRING(ticket_number, ?) AS UNSIGNED)) as max', [strlen($prefix) + 2])
                     ->value('max');
 
-                // If no existing tickets, start at 101; otherwise start at max + 1
+                // 既存番号がなければ101から開始し、存在する場合は最大値の次の番号から開始する。
                 $start = ($max ? (int) $max : 100) + 1;
 
                 DB::table('ticket_counters')->insert([
@@ -472,13 +436,7 @@ class AccountingController extends Controller
 
     private function menuItemNotFound()
     {
-        return response()->json([
-            'error' => [
-                'code' => 'NOT_FOUND',
-                'message' => '指定した商品が見つかりません',
-                'details' => ['field' => 'id'],
-            ],
-        ], 404, [], JSON_UNESCAPED_UNICODE);
+        abort(404);
     }
 
     private function ticketPrefixForStoreId(string $storeId): string
